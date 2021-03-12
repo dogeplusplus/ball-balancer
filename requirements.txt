@@ -1,0 +1,4 @@
+tqdm==4.59.0
+mlagents==0.24.1
+gym-unity==0.24.1
+torch==1.8.0
