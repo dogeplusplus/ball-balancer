@@ -47,17 +47,31 @@ class MLPQFunction(nn.Module):
         
         return obs_act_value
 
-class MLPActorCritic(nn.Module):
-    def __init__(self, observation_space, action_space, l1, l2):
+class DDPGActorCritic(nn.Module):
+    def __init__(self, observation_space, action_space, l1, l2, activation=nn.ReLU, output_activation=nn.Tanh):
         super().__init__()
         self.obs_dim = observation_space.shape[0]
         self.act_dim = action_space.shape[0]
         self.act_limit = action_space.high[0]
 
-        self.pi = MLPActor(self.obs_dim, self.act_dim, self.act_limit, l1, l2)
-        self.q = MLPQFunction(self.obs_dim, self.act_dim, l1, l2)
+        self.pi = MLPActor(self.obs_dim, self.act_dim, self.act_limit, l1, l2, activation, output_activation)
+        self.q = MLPQFunction(self.obs_dim, self.act_dim, l1, l2, activation, output_activation)
 
     def act(self, obs):
         with torch.no_grad():
             return self.pi(obs).numpy()
 
+class TD3ActorCritic(nn.Module):
+    def __init__(self, observation_space, action_space, l1, l2, activation=nn.ReLU, output_activation=nn.Tanh):
+        super().__init__()
+        self.obs_dim = observation_space.shape[0]
+        self.act_dim = action_space.shape[0]
+        self.act_limit = action_space.high[0]
+
+        self.pi = MLPActor(self.obs_dim, self.act_dim, self.act_limit, l1, l2, activation, output_activation)
+        self.q1 = MLPQFunction(self.obs_dim, self.act_dim, l1, l2, activation, output_activation)
+        self.q2 = MLPQFunction(self.obs_dim, self.act_dim, l1, l2, activation, output_activation)
+
+    def act(self, obs):
+        with torch.no_grad():
+            return self.pi(obs).numpy()

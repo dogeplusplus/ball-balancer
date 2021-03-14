@@ -5,15 +5,16 @@ import yaml
 import torch
 import random
 import inspect
-import numpy as np
 import datetime
+import itertools
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 
-from torch.utils.tensorboard import SummaryWriter
 from copy import deepcopy
 from gym_unity.envs import UnityToGymWrapper
 from mlagents_envs.base_env import ActionTuple
+from torch.utils.tensorboard import SummaryWriter
 from mlagents_envs.environment import UnityEnvironment
 from mlagents_envs.side_channel.side_channel import (
     SideChannel,
@@ -23,13 +24,15 @@ from mlagents_envs.side_channel.side_channel import (
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
 
 from core import ReplayBuffer, get_action
-from agents import DDPGActorCritic
+from agents import TD3ActorCritic
 
-class DDPG:
-    def __init__(self, ac, env, epochs=100, steps_per_epoch=4000, batch_size=32,
-        lr=1e-3, polyak=0.995, start_steps=10000, noise_scale=0.1, gamma=0.99,
-        max_ep_len=1000, update_after=1000, update_every=50, model_path=None):
-
+class TD3:
+    def __init__(
+        self, ac, env, epochs=100, steps_per_epoch=4000, batch_size=32,
+        lr=1e-3, polyak=0.995, start_steps=10000, act_noise=0.1, target_noise=0.2, 
+        noise_clip=0.5, gamma=0.99, max_ep_len=1000, update_after=1000, update_every=50, 
+        policy_delay=2, model_path=None, config=None
+    ):
         self.ac = ac
         self.env = env
         self.epochs = epochs
@@ -38,8 +41,11 @@ class DDPG:
         self.lr = lr
         self.polyak = polyak
         self.start_steps = start_steps
-        self.noise_scale = noise_scale
+        self.act_noise = act_noise
+        self.target_noise = target_noise
+        self.noise_clip = noise_clip
         self.gamma = gamma
+        self.policy_delay = policy_delay
         self.max_ep_len = max_ep_len
         self.update_after = update_after
         self.update_every = update_every
@@ -60,68 +66,75 @@ class DDPG:
 
         self.writer = SummaryWriter(log_dir=self.model_path)
         self.pi_optimizer = optim.Adam(ac.pi.parameters(), lr=self.lr)
-        self.q_optimizer = optim.Adam(ac.q.parameters(), lr=self.lr)
+        self.q_params = itertools.chain(self.ac.q1.parameters(), self.ac.q2.parameters())
+        self.q_optimizer = optim.Adam(self.q_params, lr=self.lr)
 
     def compute_loss_q(self, data):
-        s, a, r, s2, d = (
-            data["state"],
-            data["action"],
-            data["reward"],
-            data["next_state"],
-            data["done"],
-        )
+        s, a, r, s2, d = data["state"], data["action"], data["reward"], data["next_state"], data["done"]
 
-        q = self.ac.q(s, a)
-
+        q1 = self.ac.q1(s, a)
+        q2 = self.ac.q2(s, a)
+        
         with torch.no_grad():
-            q_pi_targ = self.ac_targ.q(s2, self.ac_targ.pi(s2))
-            backup = r + self.gamma * (1 - d) * q_pi_targ
+            pi_targ = self.ac_targ.pi(s2)
 
-        loss_q = ((q - backup) ** 2).mean()
+            # Target policy smoothing
+            epsilon = torch.rand_like(pi_targ) * self.target_noise
+            epsilon = torch.clamp(epsilon, -self.noise_clip, self.noise_clip)
+            a2 = pi_targ + epsilon
+            a2 = torch.clamp(a2, -self.ac.act_limit, self.ac.act_limit)
+
+            # Target Q-values
+            q1_pi_targ = self.ac_targ.q1(s2, a2)
+            q2_pi_targ = self.ac_targ.q2(s2, a2)
+            q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
+            backup = r + gamma * (1 - d) * q_pi_targ
+
+        loss_q1 = ((q1 - backup)**2).mean()
+        loss_q2 = ((q1 - backup)**2).mean()
+        loss_q = loss_q1 + loss_q2
+        
         return loss_q
 
     def compute_loss_pi(self, data):
         s = data["state"]
-        q_pi = self.ac.q(s, self.ac.pi(s))
-        return -q_pi.mean()
+        q1_pi = self.ac.q1(s, self.ac.pi(s))
+        return -q1_pi.mean()
 
-    def update(self, data):  # First run one gradient descent step for Q.
+    def update(self, data, timer):
         self.q_optimizer.zero_grad()
         loss_q = self.compute_loss_q(data)
         loss_q.backward()
         self.q_optimizer.step()
 
-        # Freeze Q-network so you don't waste computational effort
-        # computing gradients for it during the policy learning step.
-        for p in self.ac.q.parameters():
-            p.requires_grad = False
+        if timer % self.policy_delay == 0:
 
-        # Next run one gradient descent step for pi.
-        self.pi_optimizer.zero_grad()
-        loss_pi = self.compute_loss_pi(data)
-        loss_pi.backward()
-        self.pi_optimizer.step()
+            for p in self.q_params:
+                p.requires_grad = False
 
-        # Unfreeze Q-network so you can optimize it at next DDPG step.
-        for p in self.ac.q.parameters():
-            p.requires_grad = True
+            self.pi_optimizer.zero_grad()
+            loss_pi = self.compute_loss_pi(data)
+            loss_pi.backward()
+            self.pi_optimizer.step()
 
-        # Finally, update target networks by polyak averaging.
-        with torch.no_grad():
-            for p, p_targ in zip(self.ac.parameters(), self.ac_targ.parameters()):
-                # NB: We use an in-place operations "mul_", "add_" to update target
-                # params, as opposed to "mul" and "add", which would make new tensors.
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
-        
-        return loss_pi.detach().numpy(), loss_q.detach().numpy()
+            for p in self.q_params:
+                p.requires_grad = True
+
+            with torch.no_grad():
+                for p, p_targ in zip(self.ac.parameters(), self.ac_targ.parameters()):
+                    p_targ.data.mul_(polyak)
+                    p_targ.data.add_((1 - polyak) * p.data)
+
+            return loss_pi.detach().numpy(), loss_q.detach().numpy()
+
+        return None, None
 
     def log_params(self):
         os.makedirs(self.model_path, exist_ok=True)
         attributes = inspect.getmembers(self, lambda a: not(inspect.isroutine(a)) and type(a) in (int, str, float))
         config = [a for a in attributes if not(a[0].startswith("__") and a[0].endswith("__"))]
         config = dict(config)
-        config["algorithm"] = "ddpg"
+        config["algorithm"] = "td3"
         with open(f"{self.model_path}/config.yaml", "w") as f:
             f.write(yaml.dump(config))
 
@@ -142,7 +155,7 @@ class DDPG:
             if t < self.start_steps:
                 a = self.env.action_space.sample()
             else:
-                a = get_action(self.ac, s, self.noise_scale)
+                a = get_action(self.ac, s, self.act_noise)
 
             s2, r, d, info = self.env.step(a)
             ep_len += 1
@@ -167,11 +180,14 @@ class DDPG:
                 pbar.set_postfix(
                     dict(avg_epsiode_length=f"{np.mean(episode_lengths): .2f}")
                 )
-                for _ in range(self.update_every):
-                    batch = replay_buffer.sample_batch(self.batch_size)
-                    loss_pi, loss_q = self.update(batch)
-                    q_losses.append(loss_q)
-                    pi_losses.append(loss_pi)
+                for j in range(update_every):
+                    batch = replay_buffer.sample_batch(batch_size)
+                    loss_pi, loss_q = self.update(batch, j)
+
+                    if loss_q:
+                        q_losses.append(loss_q)
+                    if loss_pi:
+                        pi_losses.append(loss_pi)
 
             if (t + 1) % self.steps_per_epoch == 0:
                 epoch = (t + 1) // self.steps_per_epoch
@@ -210,20 +226,15 @@ class DDPG:
                 s, r, d, _ = self.env.step(get_action(self.ac, s, 0))
                 ep_ret += r
                 ep_len += 1
-
-
-def combined_shape(length, shape=None):
-    if shape is None:
-        return (length,)
-    return (length, shape) if np.isscalar(shape) else (length, *shape)
-
-
+                
 if __name__ == "__main__":
+    #TODO: implement soft actor critics
+    #TODO: add testing metrics to tensorboard, build it into the training loop
     agent_file = "3DBall_single/3DBall_single.x86_64"
     no_graphics = True 
     channel = EngineConfigurationChannel()
     unity_env = UnityEnvironment(
-        file_name=agent_file,
+        file_name=agent_file, 
         seed=1, 
         no_graphics=no_graphics, 
         side_channels=[channel]
@@ -236,18 +247,22 @@ if __name__ == "__main__":
     l1, l2 = 256, 256
     activation = nn.ReLU
     output_activation = nn.Tanh
-    ac = DDPGActorCritic(env.observation_space, env.action_space, l1, l2, activation=activation)
-
-    config = dict(
+    ac = TD3ActorCritic(env.observation_space, env.action_space, l1, l2, activation=activation)
+    
+    params = dict(
         gamma = 0.99,
         polyak = 0.995,
-        noise_scale = 0.1,
+        act_noise = 0.1,
+        target_noise = 0.2,
         epochs = 100,
         steps_per_epoch = 4000,
         start_steps = 10000,
         batch_size = 32,
         update_after = 1000,
         update_every = 50,
+        policy_delay = 2,
     )
-    model = DDPG(ac=ac, env=env, **config)
+    model = TD3(ac=ac, env=env, **params)
     model.train()
+    
+    
