@@ -46,3 +46,4 @@ def yaml2namespace(yaml_path):
 
     model_config = Bunch(model_config_dict)
     return model_config
+

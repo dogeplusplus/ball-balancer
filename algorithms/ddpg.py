@@ -22,7 +22,7 @@ from mlagents_envs.side_channel.side_channel import (
 )
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
 
-from core import ReplayBuffer, get_action
+from core import ReplayBuffer, get_action, setup_pytorch_for_mpi
 from agents import DDPGActorCritic
 
 class DDPG:
@@ -126,6 +126,7 @@ class DDPG:
             f.write(yaml.dump(config))
 
     def train(self):
+        setup_pytorch_for_mpi()
         self.log_params()
         ep_len = 0
         ep_ret = 0
@@ -147,7 +148,6 @@ class DDPG:
             s2, r, d, info = self.env.step(a)
             ep_len += 1
             ep_ret += r
-            s = s2
             d = False if ep_len == self.max_ep_len else d
             
             record = dict(
@@ -158,6 +158,8 @@ class DDPG:
                 done=np.array([d], dtype=np.float32),
             )
             replay_buffer.push(record)
+
+            s = s2
 
             if d or (ep_len == self.max_ep_len):
                 episode_lengths.append(ep_len)
@@ -245,7 +247,7 @@ if __name__ == "__main__":
         epochs = 100,
         steps_per_epoch = 4000,
         start_steps = 10000,
-        batch_size = 32,
+        batch_size = 128,
         update_after = 1000,
         update_every = 50,
     )

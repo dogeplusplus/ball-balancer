@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class MLPActor(nn.Module):
     def __init__(self, obs_dim, act_dim, act_limit, l1, l2, activation=nn.ReLU, output_activation=nn.Tanh):
         super(MLPActor, self).__init__()
@@ -75,3 +74,4 @@ class TD3ActorCritic(nn.Module):
     def act(self, obs):
         with torch.no_grad():
             return self.pi(obs).numpy()
+
