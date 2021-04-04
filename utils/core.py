@@ -1,6 +1,9 @@
 import yaml
 import torch
 import numpy as np
+import scipy.signal
+
+from utils.mpi_tools import mpi_statistics_scalar
 
 
 def get_action(ac, state, noise_scale):
@@ -34,11 +37,30 @@ class TD3Buffer:
 
 
 def discount_cumsum(x, discount):
-    """Magic"""
+    """Helper function to calculate geometric progression
+    of the advantage function.
+
+    Args:
+        x (np.array): vector of advantage terms
+        discount (float): discount rate
+
+    Returns:
+        Calculated advantage values.
+    """
     return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
 def combined_shape(length, shape=None):
+    """Calculate the shape of actions and observations accounting
+    for the environments where either could be a scalar or vector
+
+    Args:
+        length (int): number of samples
+        shape (int): the dimensionality of the object
+
+    Returns:
+        Tuple specifying the desired shape of the buffer variable.
+    """
     if shape is None:
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
@@ -122,7 +144,6 @@ class PPOBuffer:
             logp=self.logp
         )
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
-
 
 
 def yaml2namespace(yaml_path):

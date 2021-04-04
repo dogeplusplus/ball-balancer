@@ -1,8 +1,9 @@
-import time
+import os
+import yaml
 import torch
+import inspect
 import datetime
 import numpy as np
-import scipy.signal
 import torch.nn as nn
 
 from tqdm import tqdm
@@ -142,6 +143,10 @@ class PPO:
     def train(self):
         """Run training across multiple environments using MPI.
         """
+        # Save parameters to YAML if the root process.
+        if proc_id() == 0:
+            self.log_params()
+
         seed = 10000 * proc_id()
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -209,6 +214,17 @@ class PPO:
             if proc_id() == 0 and ((epoch % self.save_freq == 0) or (epoch == self.epochs - 1)):
                 self.save_model()
             
+    def log_params(self):
+        """Log training parameters into the YAML file for later reference.
+        """
+        os.makedirs(self.model_path, exist_ok=True)
+        attributes = inspect.getmembers(self, lambda a: not(inspect.isroutine(a)) and type(a) in (int, str, float))
+        config = [a for a in attributes if not(a[0].startswith("__") and a[0].endswith("__"))]
+        config = dict(config)
+        config["algorithm"] = "ppo"
+        with open(f"{self.model_path}/config.yaml", "w") as f:
+            f.write(yaml.dump(config))
+
     def log_summary(self, epoch, metrics):
         """Log metrics onto tensorboard.
         """
@@ -299,9 +315,7 @@ def unity_env_fn(agent_file, time_scale, no_graphics):
 
 def main():
     model_path=None
-    # model_path = "experiments/20210403_19:22:15_ppo"
-
-    agent_file = "3DBall_single/3DBall_single.x86_64"
+    agent_file = "3DBall_hard/3DBall_hard.x86_64"
     if model_path is None:
         cpus = 2
         mpi_fork(cpus)
@@ -311,7 +325,7 @@ def main():
         cpus = 1
         mpi_fork(cpus)
         ppo = PPO(lambda: inference_environment(agent_file), PPOActorCritic)
-        test_episodes = 100
+        test_episodes = 10
         ppo.test_model(model_path, test_episodes)
  
 if __name__ == "__main__":
