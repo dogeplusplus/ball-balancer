@@ -23,7 +23,7 @@ from mlagents_envs.side_channel.side_channel import (
 )
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
 
-from core import ReplayBuffer, get_action
+from core import TD3Buffer, get_action
 from agents import TD3ActorCritic
 
 class TD3:
@@ -150,7 +150,7 @@ class TD3:
         ep_len = 0
         ep_ret = 0
         s = self.env.reset()
-        replay_buffer = ReplayBuffer()
+        replay_buffer = TD3Buffer()
 
         episode_lengths = []
         episode_rewards = []
