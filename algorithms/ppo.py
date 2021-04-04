@@ -267,8 +267,9 @@ class PPO:
             o, d, ep_ret, ep_len = self.env.reset(), False, 0, 0
             while not(d or (ep_len == self.max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                a = self.ac.act(torch.as_tensor(o, dtype=torch.float32))
-                s, r, d, _ = self.env.step(a)
+                with torch.no_grad():
+                    a = self.ac.act(torch.as_tensor(o, dtype=torch.float32))
+                o, r, d, _ = self.env.step(a)
                 ep_ret += r
                 ep_len += 1
 
@@ -282,19 +283,19 @@ def environment(agent_file):
         side_channels=[channel]
     )
     channel.set_configuration_parameters(
-        time_scale=20.,
+        time_scale=1.,
     )
     env = UnityToGymWrapper(unity_env)
     return env
 
 
 def main():
-    model_path=None
-    # model_path = "experiments/20210403_13:09:42_ppo"
+    # model_path=None
+    model_path = "experiments/20210403_19:22:15_ppo"
 
     agent_file = "3DBall_single/3DBall_single.x86_64"
     if model_path is None:
-        cpus = 1
+        cpus = 2
         mpi_fork(cpus)
         ppo = PPO(lambda: environment(agent_file), PPOActorCritic)
         ppo.train()
