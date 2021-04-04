@@ -53,6 +53,19 @@ class ReplayBuffer:
 
 
     def store(self, obs, act, rew, val, logp):
+        """Push environment information into the buffer.
+
+        Args:
+            obs (np.array): observation of the environment
+            act (np.array): action taken by the agent
+            rew (float): reward received from taking the action
+            val (float): estimated value function of the critic
+            logp (float): log probability of taking action from observation state
+
+        Raises:
+            AssertionError: if the pointer exceeds the max size of replay buffer.
+        """
+            
         assert self.ptr < self.size
         self.observations[self.ptr] = obs
         self.actions[self.ptr] = act
@@ -62,7 +75,15 @@ class ReplayBuffer:
         self.ptr += 1
     
     def finish_path(self, last_val=0):
-        """Call this at the end of the trajectory or epoch ending."""
+        """Call this at the end of the trajectory or epoch ending.
+        Looks back at buffer to see where trajectory started, uses
+        rewards and value estimates from the trajectory to compute
+        advantages and rewards-to-go for each state, to use as targets
+        for the value function.
+
+        Args:
+            last_val (float): 0 if trajectory ended otherwise the value function
+        """
         path_slice = slice(self.path_start_idx, self.ptr)
         rews = np.append(self.rewards[path_slice], last_val)
         vals = np.append(self.values[path_slice], last_val)
@@ -77,6 +98,11 @@ class ReplayBuffer:
 
 
     def sample(self):
+        """Get values from the buffer for training.
+
+        Returns:
+            Dictionary of environment-agent information for training.
+        """
         assert self.ptr == self.size
         self.ptr, self.path_start_idx = 0, 0
         adv_mean, adv_std = mpi_statistics_scalar(self.advantages)
@@ -110,7 +136,14 @@ class PPO:
         self.target_kl = target_kl
         self.save_freq = save_freq
 
-        self.actor_fn = actor_fn
+        setup_pytorch_for_mpi()
+
+        self.env = self.env_fn()
+        self.ac = actor_fn(self.env.observation_space, self.env.action_space)
+        sync_params(self.ac)
+
+        self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.pi_lr)
+        self.vf_optimizer = Adam(self.ac.v.parameters(), lr=self.vf_lr)
 
         if model_path is None:
             # New Model
@@ -122,9 +155,17 @@ class PPO:
             self.model_path = model_path
             self.load_model(self.model_path)
 
-
+        self.writer = SummaryWriter(log_dir=self.model_path)
 
     def compute_loss_pi(self, data):
+        """Compute the loss of the actor policy.
+
+        Args:
+            data (dict): batchs of observations, actions, advantages and log probs
+
+        Returns:
+            Tuple of the policy loss and info dictionary for tensorboard logging.
+        """
         obs, act, adv, logp_old = data["obs"], data["act"], data["adv"], data["logp"]
 
         pi, logp = self.ac.pi(obs, act)
@@ -142,10 +183,26 @@ class PPO:
         return loss_pi, pi_info
 
     def compute_loss_v(self, data):
+        """Compute the loss of the value critic.
+
+        Args:
+            data (dict): batch of agent-environment information
+
+        Returns:
+            Value loss.
+        """
         obs, ret = data["obs"], data["ret"]
         return ((self.ac.v(obs) - ret)**2).mean()
 
     def update(self, data):
+        """Run gradient descent on the actor and critic.
+
+        Args:
+            data (dict): batch of agent-environment information
+
+        Returns:
+            Policy loss, value loss, KL-divergence, entropy and clip fraction.
+        """
         pi_l_old, pi_info_old = self.compute_loss_pi(data)
         pi_l_old = pi_l_old.item()
         v_l_old = self.compute_loss_v(data).item()
@@ -173,29 +230,21 @@ class PPO:
         return pi_l_old, v_l_old, kl, ent, cf
     
     def train(self):
-        self.writer = SummaryWriter(log_dir=self.model_path)
-        setup_pytorch_for_mpi()
-        self.env = self.env_fn()
-
-        self.ac = self.actor_fn(self.env.observation_space, self.env.action_space)
-
-        self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.pi_lr)
-        self.vf_optimizer = Adam(self.ac.v.parameters(), lr=self.vf_lr)
+        """Run training across multiple environments using MPI.
+        """
         seed = 10000 * proc_id()
         torch.manual_seed(seed)
         np.random.seed(seed)
-
-        start_time = time.time()
-        o, ep_ret, ep_len = self.env.reset(), 0, 0
-
-        sync_params(self.ac)
-        obs_dim = self.env.observation_space.shape
-        act_dim = self.env.action_space.shape
         local_steps_per_epoch = int(self.steps_per_epoch / num_procs())
 
+        obs_dim = self.env.observation_space.shape
+        act_dim = self.env.action_space.shape
         replay = ReplayBuffer(obs_dim, act_dim, local_steps_per_epoch, self.gamma, self.lam)
-        
         pbar = tqdm(range(self.epochs), ncols=100)
+    
+        # Initial observation
+        o, ep_ret, ep_len = self.env.reset(), 0, 0
+
         for epoch in pbar:
             episode_lengths = []
             episode_rewards = []
@@ -223,7 +272,6 @@ class PPO:
                     else:
                         v = 0
                     replay.finish_path(v)
-
                     episode_lengths.append(ep_len)
                     episode_rewards.append(ep_ret)
                     o, ep_ret, ep_len = self.env.reset(), 0, 0
@@ -252,13 +300,23 @@ class PPO:
                 self.save_model()
             
     def log_summary(self, epoch, metrics):
+        """Log metrics onto tensorboard.
+        """
         for name, value in metrics.items():
             self.writer.add_scalar(name, value, epoch)
     
     def save_model(self):
+        """Save model to the model directory.
+        """
         torch.save(self.ac.state_dict(), f"{self.model_path}/actor_critic")
 
     def test_model(self, model_path, test_episodes):
+        """Rollout the model on the environment for a fixed number of epsiodes.
+        
+        Args:
+            model_path (str): path to the model directory
+            test_episodes (int): number of episodes to run
+        """
         self.env = self.env_fn()
         self.ac = self.actor_fn(self.env.observation_space, self.env.action_space)
         self.ac.load_state_dict(torch.load(f"{model_path}/actor_critic"))
@@ -274,8 +332,48 @@ class PPO:
                 ep_len += 1
 
 
-def environment(agent_file):
+def train_environment(agent_file):
+    """Make unity environment with sped up time and no visualization.
+
+    Args:
+        agent_file (str): path to the environment binary
+
+    Returns:
+        Gym environment.
+    """
+    time_scale = 20.
+    no_graphics = True
+    env = unity_env_fn(agent_file, time_scale, no_graphics)
+    return env
+
+
+def inference_environment(agent_file):
+    """Create unity environment in real time with visualizations.
+
+    Args:
+        agent_file (str): path to the environment binary
+
+    Returns:
+        Gym environment.
+    """
+    time_scale=1.
     no_graphics=False
+    env = unity_env_fn(agent_file, time_scale, no_graphics)
+    return env
+
+
+def unity_env_fn(agent_file, time_scale, no_graphics):
+    """Wrapper function for making unity environment with custom
+    speed and graphics options.
+
+    Args:
+        agent_file (str): path to the environment binary
+        time_scale (float): speed at which to run the simulation
+        no_graphics (bool): whether or not to show the simulation
+
+    Returns:
+        Gym environment.
+    """
     channel = EngineConfigurationChannel()
     unity_env = UnityEnvironment(
         file_name=agent_file, 
@@ -283,26 +381,26 @@ def environment(agent_file):
         side_channels=[channel]
     )
     channel.set_configuration_parameters(
-        time_scale=1.,
+        time_scale=time_scale,
     )
     env = UnityToGymWrapper(unity_env)
     return env
 
 
 def main():
-    # model_path=None
-    model_path = "experiments/20210403_19:22:15_ppo"
+    model_path=None
+    # model_path = "experiments/20210403_19:22:15_ppo"
 
     agent_file = "3DBall_single/3DBall_single.x86_64"
     if model_path is None:
         cpus = 2
         mpi_fork(cpus)
-        ppo = PPO(lambda: environment(agent_file), PPOActorCritic)
+        ppo = PPO(lambda: train_environment(agent_file), PPOActorCritic)
         ppo.train()
     else:
         cpus = 1
         mpi_fork(cpus)
-        ppo = PPO(lambda: environment(agent_file), PPOActorCritic)
+        ppo = PPO(lambda: inference_environment(agent_file), PPOActorCritic)
         test_episodes = 100
         ppo.test_model(model_path, test_episodes)
  

@@ -42,6 +42,7 @@ class PPOCategoricalActor(PPOActor):
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act)
 
+
 class PPOGaussianActor(PPOActor):
 
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
