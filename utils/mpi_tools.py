@@ -65,7 +65,7 @@ def setup_pytorch_for_mpi():
     """
     if torch.get_num_threads() == 1:
         return
-    fair_num_threads = max(input(torch.get_num_threads() / num_procs()), 1)
+    fair_num_threads = max(int(torch.get_num_threads() / num_procs()), 1)
     torch.set_num_threads(fair_num_threads)
 
 
