@@ -4,7 +4,6 @@ import torch
 import inspect
 import datetime
 import numpy as np
-import torch.nn as nn
 
 from tqdm import tqdm
 from torch.optim import Adam
@@ -16,7 +15,6 @@ from mlagents_envs.side_channel.engine_configuration_channel import EngineConfig
 from agents.ppo_agents import PPOActorCritic
 from utils.core import PPOBuffer
 from utils.mpi_tools import (
-    mpi_statistics_scalar,
     mpi_fork,
     mpi_avg,
     proc_id,
@@ -50,6 +48,7 @@ class PPO:
         setup_pytorch_for_mpi()
 
         self.env = self.env_fn()
+        self.actor_fn = actor_fn
         self.ac = actor_fn(self.env.observation_space, self.env.action_space)
         sync_params(self.ac)
 
@@ -64,7 +63,6 @@ class PPO:
         else:
             # Existing model
             self.model_path = model_path
-            self.load_model(self.model_path)
 
         self.writer = SummaryWriter(log_dir=self.model_path)
 
@@ -243,8 +241,6 @@ class PPO:
             model_path (str): path to the model directory
             test_episodes (int): number of episodes to run
         """
-        self.env = self.env_fn()
-        self.ac = self.actor_fn(self.env.observation_space, self.env.action_space)
         self.ac.load_state_dict(torch.load(f"{model_path}/actor_critic"))
 
         for j in range(test_episodes):
@@ -269,7 +265,7 @@ def train_environment(agent_file):
     """
     time_scale = 20.
     no_graphics = True
-    env = unity_env_fn(agent_file, time_scale, no_graphics)
+    env = unity_env_fn(agent_file, time_scale, no_graphics, worker_id=proc_id())
     return env
 
 
@@ -284,11 +280,11 @@ def inference_environment(agent_file):
     """
     time_scale=1.
     no_graphics=False
-    env = unity_env_fn(agent_file, time_scale, no_graphics)
+    env = unity_env_fn(agent_file, time_scale, no_graphics, worker_id=proc_id())
     return env
 
 
-def unity_env_fn(agent_file, time_scale, no_graphics):
+def unity_env_fn(agent_file, time_scale, no_graphics, worker_id):
     """Wrapper function for making unity environment with custom
     speed and graphics options.
 
@@ -304,7 +300,8 @@ def unity_env_fn(agent_file, time_scale, no_graphics):
     unity_env = UnityEnvironment(
         file_name=agent_file, 
         no_graphics=no_graphics, 
-        side_channels=[channel]
+        side_channels=[channel],
+        worker_id=worker_id,
     )
     channel.set_configuration_parameters(
         time_scale=time_scale,
@@ -314,15 +311,16 @@ def unity_env_fn(agent_file, time_scale, no_graphics):
 
 
 def main():
-    model_path=None
-    agent_file = "3DBall_hard/3DBall_hard.x86_64"
+    model_path="experiments/20210403_19:22:15_ppo"
+    # model_path = None
+    agent_file = "environments/3DBall_single/3DBall_single.x86_64"
     if model_path is None:
         cpus = 2
         mpi_fork(cpus)
         ppo = PPO(lambda: train_environment(agent_file), PPOActorCritic)
         ppo.train()
     else:
-        cpus = 1
+        cpus = 2
         mpi_fork(cpus)
         ppo = PPO(lambda: inference_environment(agent_file), PPOActorCritic)
         test_episodes = 10
