@@ -1,9 +1,7 @@
 import os
-import gym
 import tqdm
 import yaml
 import torch
-import random
 import inspect
 import numpy as np
 import datetime
@@ -13,13 +11,7 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from copy import deepcopy
 from gym_unity.envs import UnityToGymWrapper
-from mlagents_envs.base_env import ActionTuple
 from mlagents_envs.environment import UnityEnvironment
-from mlagents_envs.side_channel.side_channel import (
-    SideChannel,
-    IncomingMessage,
-    OutgoingMessage,
-)
 from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
 
 from core import ReplayBuffer, get_action, setup_pytorch_for_mpi
@@ -47,7 +39,7 @@ class DDPG:
         self.ac_targ = deepcopy(self.ac)
         for p in self.ac_targ.parameters():
             p.requires_grad = False
-        
+
         if model_path is None:
             # New Model
             now = datetime.datetime.now()
@@ -113,7 +105,7 @@ class DDPG:
                 # params, as opposed to "mul" and "add", which would make new tensors.
                 p_targ.data.mul_(self.polyak)
                 p_targ.data.add_((1 - self.polyak) * p.data)
-        
+
         return loss_pi.detach().numpy(), loss_q.detach().numpy()
 
     def log_params(self):
@@ -149,7 +141,7 @@ class DDPG:
             ep_len += 1
             ep_ret += r
             d = False if ep_len == self.max_ep_len else d
-            
+
             record = dict(
                 state=s,
                 action=np.array([a]),
@@ -163,7 +155,7 @@ class DDPG:
 
             if d or (ep_len == self.max_ep_len):
                 episode_lengths.append(ep_len)
-                o, ep_ret, ep_len = env.reset(), 0, 0
+                s, ep_ret, ep_len = env.reset(), 0, 0
 
             if t >= self.update_after and t % self.update_every == 0:
                 pbar.set_postfix(
@@ -190,7 +182,7 @@ class DDPG:
                 if (epoch + 1) % 10 == 0:
                     self.save_model()
 
-                
+
     def save_model(self):
         torch.save(self.ac.state_dict(), f"{self.model_path}/actor_critic")
         torch.save(self.ac_targ.state_dict(), f"{self.model_path}/actor_critic_targ")
@@ -198,14 +190,14 @@ class DDPG:
     def log_summary(self, epoch, metrics):
         for name, value in metrics.items():
             self.writer.add_scalar(name, value, epoch)
-    
+
     def load_model(self, path):
         self.ac.load_state_dict(torch.load(f"{path}/actor_critic"))
         self.ac_targ.load_state_dict(torch.load(f"{path}/actor_critic_targ"))
 
     def test_agent(self, test_episodes):
         s = self.env.reset()
-        for j in range(test_episodes):
+        for _ in range(test_episodes):
             s, d, ep_ret, ep_len = self.env.reset(), False, 0, 0
             while not(d or (ep_len == self.max_ep_len)):
                 # Take deterministic actions at test time (noise_scale=0)
@@ -222,12 +214,12 @@ def combined_shape(length, shape=None):
 
 if __name__ == "__main__":
     agent_file = "3DBall_single/3DBall_single.x86_64"
-    no_graphics = True 
+    no_graphics = True
     channel = EngineConfigurationChannel()
     unity_env = UnityEnvironment(
         file_name=agent_file,
-        seed=1, 
-        no_graphics=no_graphics, 
+        seed=1,
+        no_graphics=no_graphics,
         side_channels=[channel]
     )
     channel.set_configuration_parameters(

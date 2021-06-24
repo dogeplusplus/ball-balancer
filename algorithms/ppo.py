@@ -88,7 +88,7 @@ class PPO:
         clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
 
         pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
-    
+
         return loss_pi, pi_info
 
     def compute_loss_v(self, data):
@@ -137,7 +137,7 @@ class PPO:
 
         kl, ent, cf = pi_info["kl"], pi_info_old["ent"], pi_info["cf"]
         return pi_l_old, v_l_old, kl, ent, cf
-    
+
     def train(self):
         """Run training across multiple environments using MPI.
         """
@@ -154,7 +154,7 @@ class PPO:
         act_dim = self.env.action_space.shape
         replay = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, self.gamma, self.lam)
         pbar = tqdm(range(self.epochs), ncols=100)
-    
+
         # Initial observation
         o, ep_ret, ep_len = self.env.reset(), 0, 0
 
@@ -196,7 +196,7 @@ class PPO:
             pbar.set_postfix(
                 dict(avg_epsiode_length=f"{np.mean(episode_lengths): .2f}")
             )
-            metrics = { 
+            metrics = {
                 "Environment/Episode Length": np.mean(episode_lengths),
                 "Environment/Cumulative Reward": np.mean(episode_rewards),
                 "Loss/Policy": pi_loss,
@@ -208,10 +208,10 @@ class PPO:
             episode_lengths = []
             episode_rewards = []
             self.log_summary(epoch, metrics)
-        
+
             if proc_id() == 0 and ((epoch % self.save_freq == 0) or (epoch == self.epochs - 1)):
                 self.save_model()
-            
+
     def log_params(self):
         """Log training parameters into the YAML file for later reference.
         """
@@ -228,7 +228,7 @@ class PPO:
         """
         for name, value in metrics.items():
             self.writer.add_scalar(name, value, epoch)
-    
+
     def save_model(self):
         """Save model to the model directory.
         """
@@ -236,7 +236,7 @@ class PPO:
 
     def test_model(self, model_path, test_episodes):
         """Rollout the model on the environment for a fixed number of epsiodes.
-        
+
         Args:
             model_path (str): path to the model directory
             test_episodes (int): number of episodes to run
@@ -328,5 +328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

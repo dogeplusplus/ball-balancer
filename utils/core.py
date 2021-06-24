@@ -75,7 +75,7 @@ class PPOBuffer:
         self.returns = np.zeros(size, dtype=np.float32)
         self.values = np.zeros(size, dtype=np.float32)
         self.logp = np.zeros(size, dtype=np.float32)
-    
+
         self.gamma = gamma
         self.lam = lam
         self.ptr, self.path_start_idx, self.size = 0, 0, size
@@ -94,7 +94,7 @@ class PPOBuffer:
         Raises:
             AssertionError: if the pointer exceeds the max size of replay buffer.
         """
-            
+
         assert self.ptr < self.size
         self.observations[self.ptr] = obs
         self.actions[self.ptr] = act
@@ -102,7 +102,7 @@ class PPOBuffer:
         self.values[self.ptr] = val
         self.logp[self.ptr] = logp
         self.ptr += 1
-    
+
     def finish_path(self, last_val=0):
         """Call this at the end of the trajectory or epoch ending.
         Looks back at buffer to see where trajectory started, uses
@@ -116,7 +116,7 @@ class PPOBuffer:
         path_slice = slice(self.path_start_idx, self.ptr)
         rews = np.append(self.rewards[path_slice], last_val)
         vals = np.append(self.values[path_slice], last_val)
-        
+
         # GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
         self.advantages[path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
@@ -138,8 +138,8 @@ class PPOBuffer:
         self.advantages = (self.advantages - adv_mean) / adv_std
         data = dict(
             obs=self.observations,
-            act=self.actions, 
-            ret=self.returns, 
+            act=self.actions,
+            ret=self.returns,
             adv=self.advantages,
             logp=self.logp
         )
@@ -160,4 +160,3 @@ def yaml2namespace(yaml_path):
 
     model_config = Bunch(model_config_dict)
     return model_config
-

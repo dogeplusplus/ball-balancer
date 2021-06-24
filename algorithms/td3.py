@@ -1,9 +1,7 @@
 import os
-import gym
 import tqdm
 import yaml
 import torch
-import random
 import inspect
 import datetime
 import itertools
@@ -13,15 +11,11 @@ import torch.optim as optim
 
 from copy import deepcopy
 from gym_unity.envs import UnityToGymWrapper
-from mlagents_envs.base_env import ActionTuple
 from torch.utils.tensorboard import SummaryWriter
 from mlagents_envs.environment import UnityEnvironment
-from mlagents_envs.side_channel.side_channel import (
-    SideChannel,
-    IncomingMessage,
-    OutgoingMessage,
+from mlagents_envs.side_channel.engine_configuration_channel import (
+    EngineConfigurationChannel
 )
-from mlagents_envs.side_channel.engine_configuration_channel import EngineConfigurationChannel
 
 from core import TD3Buffer, get_action
 from agents import TD3ActorCritic
@@ -29,8 +23,8 @@ from agents import TD3ActorCritic
 class TD3:
     def __init__(
         self, ac, env, epochs=100, steps_per_epoch=4000, batch_size=32,
-        lr=1e-4, polyak=0.995, start_steps=10000, act_noise=0.1, target_noise=0.2, 
-        noise_clip=0.5, gamma=0.99, max_ep_len=1000, update_after=1000, update_every=50, 
+        lr=1e-4, polyak=0.995, start_steps=10000, act_noise=0.1, target_noise=0.2,
+        noise_clip=0.5, gamma=0.99, max_ep_len=1000, update_after=1000, update_every=50,
         policy_delay=2, model_path=None, config=None
     ):
         self.ac = ac
@@ -53,7 +47,7 @@ class TD3:
         self.ac_targ = deepcopy(self.ac)
         for p in self.ac_targ.parameters():
             p.requires_grad = False
-        
+
         if model_path is None:
             # New Model
             now = datetime.datetime.now()
@@ -76,10 +70,10 @@ class TD3:
         r = r.float()
         s2 = s2.float()
         d = d.float()
-        
+
         q1 = self.ac.q1(s, a)
         q2 = self.ac.q2(s, a)
-        
+
         with torch.no_grad():
             pi_targ = self.ac_targ.pi(s2)
 
@@ -98,7 +92,7 @@ class TD3:
         loss_q1 = ((q1 - backup)**2).mean()
         loss_q2 = ((q1 - backup)**2).mean()
         loss_q = loss_q1 + loss_q2
-        
+
         return loss_q
 
     def compute_loss_pi(self, data):
@@ -171,7 +165,7 @@ class TD3:
             ep_len += 1
             ep_ret += r
             d = False if ep_len == self.max_ep_len else d
-            
+
             record = dict(
                 state=s,
                 action=a,
@@ -203,7 +197,7 @@ class TD3:
                 pbar.set_postfix(
                     dict(avg_epsiode_length=f"{np.mean(episode_lengths): .2f}")
                 )
-                metrics = { 
+                metrics = {
                     "Environment/Episode Length": np.mean(episode_lengths),
                     "Environment/Cumulative Reward": np.mean(episode_rewards),
                     "Losses/Policy": np.mean(pi_losses),
@@ -218,7 +212,7 @@ class TD3:
                 if (epoch + 1) % 10 == 0:
                     self.save_model()
 
-                
+
     def save_model(self):
         torch.save(self.ac.state_dict(), f"{self.model_path}/actor_critic")
         torch.save(self.ac_targ.state_dict(), f"{self.model_path}/actor_critic_targ")
@@ -226,7 +220,7 @@ class TD3:
     def log_summary(self, epoch, metrics):
         for name, value in metrics.items():
             self.writer.add_scalar(name, value, epoch)
-    
+
     def load_model(self, path):
         self.ac.load_state_dict(torch.load(f"{path}/actor_critic"))
         self.ac_targ.load_state_dict(torch.load(f"{path}/actor_critic_targ"))
@@ -246,39 +240,39 @@ def main():
     no_graphics = True
     channel = EngineConfigurationChannel()
     unity_env = UnityEnvironment(
-        file_name=agent_file, 
-        seed=1, 
-        no_graphics=no_graphics, 
+        file_name=agent_file,
+        seed=1,
+        no_graphics=no_graphics,
         side_channels=[channel]
     )
     channel.set_configuration_parameters(
         time_scale=50.,
     )
     env = UnityToGymWrapper(unity_env)
-    l1, l2 = 64, 64 
+    l1, l2 = 64, 64
     activation = nn.ReLU
     output_activation = nn.Tanh
     ac = TD3ActorCritic(
         env.observation_space,
-        env.action_space, 
-        l1, 
-        l2, 
+        env.action_space,
+        l1,
+        l2,
         activation=activation
     )
-    
+
     params = dict(
-        gamma = 0.99,
-        polyak = 0.995,
-        act_noise = 0.1,
-        target_noise = 0.2,
-        epochs = 100,
-        steps_per_epoch = 4000,
-        start_steps = 10000,
-        batch_size = 256, 
-        update_after = 10000,
-        update_every = 50,
-        policy_delay = 2,
-        lr= 1e-3,
+        gamma=0.99,
+        polyak=0.995,
+        act_noise=0.1,
+        target_noise=0.2,
+        epochs=100,
+        steps_per_epoch=4000,
+        start_steps=10000,
+        batch_size=256,
+        update_after=10000,
+        update_every=50,
+        policy_delay=2,
+        lr=1e-3,
     )
 
     model = TD3(ac=ac, env=env, **params)
@@ -286,5 +280,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-

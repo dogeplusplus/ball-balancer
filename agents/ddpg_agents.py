@@ -9,7 +9,7 @@ class MLPActor(nn.Module):
         self.fc2 = nn.Linear(l1, l2)
         self.ln2 = nn.LayerNorm(l2)
         self.mu = nn.Linear(l2, act_dim)
-        
+
         self.activation = activation()
         self.output_activation = output_activation()
         self.act_limit = act_limit
@@ -39,11 +39,11 @@ class MLPQFunction(nn.Module):
     def forward(self, obs, act):
         obs = self.activation(self.ln1(self.fc1(obs)))
         obs_value = self.ln2(self.fc2(obs))
-        
+
         act_value = self.activation(self.action_value(act))
         obs_act_value = self.activation(torch.add(obs_value, act_value))
         obs_act_value = self.q(obs_act_value)
-        
+
         return obs_act_value
 
 class DDPGActorCritic(nn.Module):
@@ -74,4 +74,3 @@ class TD3ActorCritic(nn.Module):
     def act(self, obs):
         with torch.no_grad():
             return self.pi(obs).numpy()
-
