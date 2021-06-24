@@ -1,5 +1,5 @@
 # ball-balancer
-- Demonstration using PPO to teach a single agent to balance a ball on its head. 
+- Demonstration using PPO to teach a single agent to balance a ball on its head.
 - Example of training Unity ML agents using the lower level Python API, using PPO implementation from OpenAI's spinningup implementation which uses MPI for parrallel  training.
 - Added support for logging in tensorboard, saving experiments and configurations for experiments.
 - Also contains some legacy code for DDPG and TD3 (WIP).
