@@ -35,7 +35,7 @@ class PPO:
         self.epochs = epochs
         self.gamma = gamma
         self.clip_ratio = clip_ratio
-        
+
         self.pi_lr = pi_lr
         self.vf_lr = vf_lr
         self.train_pi_iters = train_pi_iters
@@ -264,7 +264,7 @@ def train_environment(agent_file):
         Gym environment.
     """
     time_scale = 20.
-    no_graphics = True
+    no_graphics = False
     env = unity_env_fn(agent_file, time_scale, no_graphics, worker_id=proc_id())
     return env
 
@@ -298,8 +298,8 @@ def unity_env_fn(agent_file, time_scale, no_graphics, worker_id):
     """
     channel = EngineConfigurationChannel()
     unity_env = UnityEnvironment(
-        file_name=agent_file, 
-        no_graphics=no_graphics, 
+        file_name=agent_file,
+        no_graphics=no_graphics,
         side_channels=[channel],
         worker_id=worker_id,
     )
@@ -315,17 +315,17 @@ def main():
     # model_path = None
     agent_file = "environments/3DBall_single/3DBall_single.x86_64"
     if model_path is None:
-        cpus = 2
+        cpus = 8
         mpi_fork(cpus)
         ppo = PPO(lambda: train_environment(agent_file), PPOActorCritic)
         ppo.train()
     else:
-        cpus = 2
+        cpus = 1
         mpi_fork(cpus)
         ppo = PPO(lambda: inference_environment(agent_file), PPOActorCritic)
         test_episodes = 10
         ppo.test_model(model_path, test_episodes)
- 
+
 if __name__ == "__main__":
     main()
 

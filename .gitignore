@@ -1,4 +1,6 @@
 3DBall_single
 3DBall
 experiments/*
+environments/*
+results/*
 *.swp
